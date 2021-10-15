@@ -28,9 +28,61 @@ class ImportPDO(bpy.types.Operator):
     def execute(self, context):
         print("Import PDO called")
 
+        def decode(encoding, data):
+            if encoding == 0:
+                # *0x0e == 0 likely means utf-8 encoding
+                return data.decode(encoding="utf-8")
+            if encoding == 1:
+                # *0x0e == 1 likely means utf-16 encoding
+                return data.decode(encoding="utf-16")
+
         with open(self.filepath,"rb") as f:
-            f.seek(0xce)    #   skip to the amount of objects
+            f.seek(0x0a)    # skip "version 3" string at the beginning
+
+            # parse header
+
+            # get some values from the header
+            version = int.from_bytes(f.read(0x4),byteorder='little')
+            encoding = int.from_bytes(f.read(4),byteorder='little')  # 0x0e, text encoding
+            second_unknown_int = int.from_bytes(f.read(4),byteorder='little')   # 0x12
+            text_length = int.from_bytes(f.read(4),byteorder='little')    # 0x16
+
+            # Pepakura 3 uses a slightly different format that isn't supported yet
+            if version == 5:
+                self.report({"ERROR"},"Pepakura 3 currently isn't supported!")
+                return {"CANCELLED"}
+
+            print("PDO File version: %d" % version)
+            #print("second unknown int: %d" % second_unknown_int)
+
+            # vendor String? (either "Pepakura Designer 4" or "Pepakura Designer 3")
+            string_1 = decode(encoding,f.read(text_length))
+            print("first String: %s" % string_1)
+            
+            # the number of Strings following? (though there is one more and one with 0 length, but after 2 bytes, there is another length and string, so idk)
+            # ^ Wrong, seems to always be 3 Strings before weirdness
+            # ^ They probably aren't strings but just some binary data (doesn't really matter anyways, it just needs to be skipped, which works)
+            unknown_int_3 = int.from_bytes(f.read(4),byteorder='little')
+            for x in range(3):
+                data_len = int.from_bytes(f.read(4),byteorder='little')
+                f.read(data_len) # advance to after the data block and just discard it (I don't know what it's for)
+                print("Data Block %d length %d" % (x,data_len))
+
+            # skip another block 
+            f.read(2)   # advance by 2 bytes that contain some unknown data
+            data_len = int.from_bytes(f.read(4),byteorder='little')
+            f.read(data_len)
+
+            # The best source I could find for the size of this block is checking the file version
+            if version == 5:
+                f.read(0x22)
+            if version == 6 :
+                f.read(0x24)
+
             num_objects = int.from_bytes(f.read(4),byteorder='little')
+            f.read(0xf)    # skip 0x13 bytes to the number of vertices
+            print(num_objects)
+
             for obj in range(1):    # only reading the first object because I don't know how to calculate the size of the last block yet
                 fname = os.path.basename(f.name)
 
@@ -39,16 +91,16 @@ class ImportPDO(bpy.types.Operator):
                 object = bpy.data.objects.new(fname[:len(fname) - 4],mesh)
                 bpy.context.view_layer.active_layer_collection.collection.objects.link(object)
 
-                f.seek(0xe1)    # go to where the number of verticies is stored as a uint32 (or int32)
                 # (currently hardcoded offset from the start of the file, needs to be changed once I figure out the block of data after the unfold data)
                 num_verts = int.from_bytes(f.read(4),byteorder='little')
+                print(num_verts)
                 mesh.vertices.add(num_verts)
                 
                 for x in range(num_verts):
                     mesh.vertices[x].co = (struct.unpack("d",f.read(8))[0],struct.unpack("d",f.read(8))[0],struct.unpack("d",f.read(8))[0])
                 
                 num_faces = int.from_bytes(f.read(4),byteorder='little')
-                edge_index = 0  # keeping track of the length of the edges array
+                print(num_faces)
                 bm = bmesh.new()
                 bm.from_mesh(mesh)
                 for x in range(num_faces):
