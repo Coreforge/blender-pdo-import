@@ -144,7 +144,7 @@ class ImportPDO(bpy.types.Operator):
 
 def menu_func(self,context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
-    self.layout.operator(ImportPDO.bl_idname,text="Pepakura 4 (.pdo)")
+    self.layout.operator(ImportPDO.bl_idname,text="Pepakura 3/4 (.pdo)")
 
 def register():
     print("loaded")
