@@ -36,29 +36,9 @@ class ImportPDO(bpy.types.Operator):
                 # *0x0e == 1 likely means utf-16 encoding
                 return data.decode(encoding="utf-16")
 
-        with open(self.filepath,"rb") as f:
-            f.seek(0x0a)    # skip "version 3" string at the beginning
+        def skipDataBlockV6(f):
+            #skips over the data Block in the header to the object count for format version 6
 
-            # parse header
-
-            # get some values from the header
-            version = int.from_bytes(f.read(0x4),byteorder='little')
-            encoding = int.from_bytes(f.read(4),byteorder='little')  # 0x0e, text encoding
-            second_unknown_int = int.from_bytes(f.read(4),byteorder='little')   # 0x12
-            text_length = int.from_bytes(f.read(4),byteorder='little')    # 0x16
-
-            # Pepakura 3 uses a slightly different format that isn't supported yet
-            if version == 5:
-                self.report({"ERROR"},"Pepakura 3 currently isn't supported!")
-                return {"CANCELLED"}
-
-            print("PDO File version: %d" % version)
-            #print("second unknown int: %d" % second_unknown_int)
-
-            # vendor String? (either "Pepakura Designer 4" or "Pepakura Designer 3")
-            string_1 = decode(encoding,f.read(text_length))
-            print("first String: %s" % string_1)
-            
             # the number of Strings following? (though there is one more and one with 0 length, but after 2 bytes, there is another length and string, so idk)
             # ^ Wrong, seems to always be 3 Strings before weirdness
             # ^ They probably aren't strings but just some binary data (doesn't really matter anyways, it just needs to be skipped, which works)
@@ -72,17 +52,56 @@ class ImportPDO(bpy.types.Operator):
             f.read(2)   # advance by 2 bytes that contain some unknown data
             data_len = int.from_bytes(f.read(4),byteorder='little')
             f.read(data_len)
+            f.read(0x24)    # skip another data block
 
-            # The best source I could find for the size of this block is checking the file version
-            if version == 5:
-                f.read(0x22)
-            if version == 6 :
-                f.read(0x24)
+        def skipDataBlockV5(f):
+            f.read(4)   # skip over an unknown 32bit integer
+            f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of first block and read first block
+            f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of second block and read second block
+            f.read(4)   # skip another unknown 32bit integer
+            f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of third block and read third block
+            f.read(0x22)    # skip another data block
+
+
+        with open(self.filepath,"rb") as f:
+            f.seek(0x0a)    # skip "version 3" string at the beginning
+
+            # parse header
+
+            # get some values from the header
+            version = int.from_bytes(f.read(0x4),byteorder='little')
+            encoding = int.from_bytes(f.read(4),byteorder='little')  # 0x0e, text encoding
+            second_unknown_int = int.from_bytes(f.read(4),byteorder='little')   # 0x12
+            text_length = int.from_bytes(f.read(4),byteorder='little')    # 0x16
+            if encoding == 2:
+                if version == 5:
+                    self.report({"WARNING"},"File is weird. Header parsing is mostly based on fixed numbers, so high probability of it not working.")
+
+                    f.read(0x12)    # skip a bunch of uint32s and 2 additional bytes I don't know what they're for
+                    f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of data block and read the block
+                    f.read(0x22)    # skip another data block (I don't know what it's for, but it has the same size as the block in the "normal" v5 files)
+                else:
+                    self.report({"ERROR"},"File is too weird. Please contact the author of the plugin.")
+                    return  {"CANCELLED"}
+            else:
+                print("PDO File version: %d" % version)
+                #print("second unknown int: %d" % second_unknown_int)
+
+                # vendor String? (either "Pepakura Designer 4" or "Pepakura Designer 3")
+                string_1 = decode(encoding,f.read(text_length))
+                print("first String: %s" % string_1)
+
+                if version == 6:
+                    skipDataBlockV6(f)
+                else :
+                    skipDataBlockV5(f)
+
 
             num_objects = int.from_bytes(f.read(4),byteorder='little')
-            f.read(0xf)    # skip 0x13 bytes to the number of vertices
+            f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of another block and read that block
+            f.read(0x1)     # there is another byte after that block I don't know the purpose of, but I don't think it matters
             print(num_objects)
-
+            
             for obj in range(1):    # only reading the first object because I don't know how to calculate the size of the last block yet
                 fname = os.path.basename(f.name)
 
