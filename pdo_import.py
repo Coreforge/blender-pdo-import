@@ -62,12 +62,15 @@ class ImportPDO(bpy.types.Operator):
             f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of third block and read third block
             f.read(0x22)    # skip another data block
 
+        def skipEdgeBlock(f):
+            num_edges = int.from_bytes(f.read(4),byteorder='little')    # might not be the amount of edges, but it seems to match
+            f.read(num_edges * 0x16)    # I don't know how to interpret the data in the block, but the first 4 bytes are the amount of edges, and the following block
+                                        # is 0x16 bytes for every edge
 
         with open(self.filepath,"rb") as f:
             f.seek(0x0a)    # skip "version 3" string at the beginning
-
             # parse header
-
+            
             # get some values from the header
             version = int.from_bytes(f.read(0x4),byteorder='little')
             encoding = int.from_bytes(f.read(4),byteorder='little')  # 0x0e, text encoding
@@ -96,13 +99,16 @@ class ImportPDO(bpy.types.Operator):
                 else :
                     skipDataBlockV5(f)
 
-
+            print("nObjects offset: %s" % hex(f.tell()))
             num_objects = int.from_bytes(f.read(4),byteorder='little')
-            f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of another block and read that block
-            f.read(0x1)     # there is another byte after that block I don't know the purpose of, but I don't think it matters
             print(num_objects)
             
-            for obj in range(1):    # only reading the first object because I don't know how to calculate the size of the last block yet
+            for obj in range(num_objects):   
+                # this block is there for every object in the file, so it has to be skipped for every object
+                print("block starts at offset: %s" % hex(f.tell() + 4))
+                f.read(int.from_bytes(f.read(4),byteorder='little'))    # read size of another block and read that block
+                f.read(0x1)     # there is another byte after that block I don't know the purpose of, but I don't think it matters
+
                 fname = os.path.basename(f.name)
 
                 # create the mesh, create an object, link the mesh to the object and link the object to the active collection of the current view layer
@@ -111,6 +117,7 @@ class ImportPDO(bpy.types.Operator):
                 bpy.context.view_layer.active_layer_collection.collection.objects.link(object)
 
                 # (currently hardcoded offset from the start of the file, needs to be changed once I figure out the block of data after the unfold data)
+                print("nVerts offset: %s" % hex(f.tell()))
                 num_verts = int.from_bytes(f.read(4),byteorder='little')
                 print(num_verts)
                 mesh.vertices.add(num_verts)
@@ -118,6 +125,7 @@ class ImportPDO(bpy.types.Operator):
                 for x in range(num_verts):
                     mesh.vertices[x].co = (struct.unpack("d",f.read(8))[0],struct.unpack("d",f.read(8))[0],struct.unpack("d",f.read(8))[0])
                 
+                print("nFaces offset: %s" % hex(f.tell()))
                 num_faces = int.from_bytes(f.read(4),byteorder='little')
                 print(num_faces)
                 bm = bmesh.new()
@@ -134,6 +142,8 @@ class ImportPDO(bpy.types.Operator):
                     bm.faces.new(indicies)
                 bm.to_mesh(mesh)
                 bm.free()
+                print("End of face Data: %s" % hex(f.tell()))
+                skipEdgeBlock(f)
 
 
         return {'FINISHED'}
